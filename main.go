@@ -24,16 +24,17 @@ type DataSetPacket struct {
 type model struct {
 	chart       tslc.Model
 	zoneManager *zone.Manager
-	packetChan  chan *probing.Packet
+	packetChan  chan *DataSetPacket
 	pingerList  []*probing.Pinger
+	hostList    []ColorHost
 	highestPing float64
 }
 
 // TODO: Change this to receive a DataSetPacket channel instead of a packet channel
 
-func waitForPing(packetChan chan *probing.Packet) tea.Cmd {
+func waitForPing(packetChan chan *DataSetPacket) tea.Cmd {
 	return func() tea.Msg {
-		return DataSetPacket{time.Now(), <-packetChan}
+		return <-packetChan
 	}
 }
 
@@ -54,9 +55,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		}
-	case DataSetPacket:
+	case *DataSetPacket:
 		// TODO: Change this to pushing data sets
-		m.chart.Push(tslc.TimePoint{Time: msg.Timestamp, Value: msg.Packet.Rtt.Seconds()})
+		m.chart.PushDataSet(msg.DataSetName, tslc.TimePoint{Time: msg.Timestamp, Value: msg.Packet.Rtt.Seconds()})
 		if msg.Packet.Rtt.Seconds() > m.highestPing {
 			m.highestPing = msg.Packet.Rtt.Seconds()
 			m.chart.SetViewYRange(0, m.highestPing*2)
@@ -65,23 +66,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chart.DrawBrailleAll()
 		return m, waitForPing(m.packetChan)
 	}
-	// forward Bubble Tea Msg to time series chart
-	// and draw all data sets using braille runes
 	return m, nil
 }
 
 func (m model) View() string {
 	// call bubblezone Manager.Scan() at root model
-	return m.zoneManager.Scan(
+	s := m.zoneManager.Scan(
 		lipgloss.NewStyle().
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderForeground(lipgloss.Color("63")). // purple
 			Render(m.chart.View()),
 	)
+	s += "\n"
+	for _, host := range m.hostList {
+		s += lipgloss.NewStyle().
+			Foreground(lipgloss.Color(host.Color)).
+			Render(host.Host)
+		s += "    "
+	}
+	return s
 }
 
 // TODO: Need to set up tea stuff to update on channel update like:
 // https://github.com/charmbracelet/bubbletea/blob/main/examples/realtime/main.go
+
+type ColorHost struct {
+	Color string
+	Host  string
+}
 
 func main() {
 	// TODO: structure this betterer
@@ -91,7 +103,7 @@ func main() {
 	height := 24
 	chart := tslc.New(width, height)
 	chart.YLabelFormatter = func(i int, y float64) string {
-		return fmt.Sprintf("%f", y)
+		return fmt.Sprintf("%.3f", y)
 	}
 
 	chart.XLabelFormatter = tslc.HourTimeLabelFormatter()
@@ -99,19 +111,26 @@ func main() {
 	chart.SetViewYRange(0, 0.05)
 
 	// TODO: stuff that will be cmd inputable
-	pingDstList := []string{"1.1.1.1"}
+	pingDstList := []ColorHost{{"1", "google.com"}, {"2", "1.1.1.1"}, {"3", "192.168.1.1"}}
 	// count := 4
 	// interval := 1000 // in milliseconds
+
+	//TODO: Make this only run if we are doing gui shizzles
+	for _, host := range pingDstList {
+		style := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(host.Color))
+		chart.SetDataSetStyle(host.Host, style)
+	}
 
 	// TODO: Change packetChan to be a DataSetPacket
 	// Set up packet channel to receive pings for processing
 	// o.o packet-chan
-	packetChan := make(chan *probing.Packet)
+	packetChan := make(chan *DataSetPacket)
 
 	// Set up all the pingers
 	pingerList := []*probing.Pinger{}
 	for _, host := range pingDstList {
-		pinger, err := probing.NewPinger(host)
+		pinger, err := probing.NewPinger(host.Host)
 		if err != nil {
 			// If we can't set up one of the pingers then we should just give up
 			panic(err)
@@ -123,7 +142,7 @@ func main() {
 		pinger.OnRecv = func(pkt *probing.Packet) {
 			//fmt.Printf("%s: %d bytes from %s: icmp_seq=%d time=%v\n",
 			//	host, pkt.Nbytes, pkt.IPAddr, pkt.Seq, pkt.Rtt)
-			packetChan <- pkt
+			packetChan <- &DataSetPacket{DataSetName: host.Host, Timestamp: time.Now(), Packet: pkt}
 		}
 
 		pinger.OnDuplicateRecv = func(pkt *probing.Packet) {
@@ -177,7 +196,7 @@ func main() {
 	chart.Focus() // set focus to process keyboard and mouse messages
 
 	// start new Bubble Tea program with mouse support enabled
-	m := model{chart, zoneManager, packetChan, pingerList, 0.0}
+	m := model{chart, zoneManager, packetChan, pingerList, pingDstList, 0.0}
 	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		fmt.Println("Error running program:", err)
 		os.Exit(1)
