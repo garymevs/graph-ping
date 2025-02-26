@@ -15,9 +15,10 @@ import (
 	zone "github.com/lrstanley/bubblezone"
 )
 
-type TimestampedPacket struct {
-	Timestamp time.Time
-	Packet    probing.Packet
+type DataSetPacket struct {
+	DataSetName string
+	Timestamp   time.Time
+	Packet      *probing.Packet
 }
 
 type model struct {
@@ -25,10 +26,21 @@ type model struct {
 	zoneManager *zone.Manager
 	packetChan  chan *probing.Packet
 	pingerList  []*probing.Pinger
+	highestPing float64
+}
+
+// TODO: Change this to receive a DataSetPacket channel instead of a packet channel
+
+func waitForPing(packetChan chan *probing.Packet) tea.Cmd {
+	return func() tea.Msg {
+		return DataSetPacket{time.Now(), <-packetChan}
+	}
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return tea.Batch(
+		waitForPing(m.packetChan),
+	)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -42,17 +54,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		}
+	case DataSetPacket:
+		// TODO: Change this to pushing data sets
+		m.chart.Push(tslc.TimePoint{Time: msg.Timestamp, Value: msg.Packet.Rtt.Seconds()})
+		if msg.Packet.Rtt.Seconds() > m.highestPing {
+			m.highestPing = msg.Packet.Rtt.Seconds()
+			m.chart.SetViewYRange(0, m.highestPing*2)
+		}
+		m.chart, _ = m.chart.Update(msg)
+		m.chart.DrawBrailleAll()
+		return m, waitForPing(m.packetChan)
 	}
-	select {
-	case packet := <-m.packetChan:
-		m.chart.Push(tslc.TimePoint{Time: time.Now(), Value: float64(packet.Rtt.Seconds())})
-	default:
-	}
-
 	// forward Bubble Tea Msg to time series chart
 	// and draw all data sets using braille runes
-	m.chart, _ = m.chart.Update(msg)
-	m.chart.DrawBrailleAll()
 	return m, nil
 }
 
@@ -71,15 +85,25 @@ func (m model) View() string {
 
 func main() {
 	// TODO: structure this betterer
+	// TODO: Look at adding colour coded labels to the X Axis for each data set (ping target)
+	// TODO: Fix scrolling / key control for viewing
 	width := 60
 	height := 24
 	chart := tslc.New(width, height)
+	chart.YLabelFormatter = func(i int, y float64) string {
+		return fmt.Sprintf("%f", y)
+	}
+
+	chart.XLabelFormatter = tslc.HourTimeLabelFormatter()
+	chart.AutoMaxY = true
+	chart.SetViewYRange(0, 0.05)
 
 	// TODO: stuff that will be cmd inputable
-	pingDstList := []string{"www.google.com"}
+	pingDstList := []string{"1.1.1.1"}
 	// count := 4
 	// interval := 1000 // in milliseconds
 
+	// TODO: Change packetChan to be a DataSetPacket
 	// Set up packet channel to receive pings for processing
 	// o.o packet-chan
 	packetChan := make(chan *probing.Packet)
@@ -93,7 +117,6 @@ func main() {
 			panic(err)
 		}
 		pinger.SetPrivileged(true)
-		pinger.Count = 10
 
 		// TODO: set up the inputable parameters
 
@@ -154,7 +177,7 @@ func main() {
 	chart.Focus() // set focus to process keyboard and mouse messages
 
 	// start new Bubble Tea program with mouse support enabled
-	m := model{chart, zoneManager, packetChan, pingerList}
+	m := model{chart, zoneManager, packetChan, pingerList, 0.0}
 	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		fmt.Println("Error running program:", err)
 		os.Exit(1)
