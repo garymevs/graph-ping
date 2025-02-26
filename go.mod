@@ -12,6 +12,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.0.0 // indirect
 	github.com/charmbracelet/x/ansi v0.8.0 // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
+	github.com/cpuguy83/go-md2man/v2 v2.0.5 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/lrstanley/bubblezone v0.0.0-20250222012949-f7fb4dcbadeb // indirect
@@ -24,6 +25,9 @@ require (
 	github.com/muesli/termenv v0.15.2 // indirect
 	github.com/prometheus-community/pro-bing v0.6.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/russross/blackfriday/v2 v2.1.0 // indirect
+	github.com/urfave/cli v1.22.16 // indirect
+	github.com/urfave/cli/v3 v3.0.0-beta1 // indirect
 	golang.org/x/net v0.34.0 // indirect
 	golang.org/x/sync v0.11.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
