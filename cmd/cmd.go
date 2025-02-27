@@ -6,7 +6,6 @@ import (
 	"graph-ping/data"
 	"graph-ping/gui"
 	"os"
-	"os/signal"
 	"time"
 
 	"github.com/alitto/pond/v2"
@@ -31,7 +30,7 @@ func Init() {
 			&cli.StringFlag{
 				Name:    "output",
 				Aliases: []string{"o"},
-				Usage:   "Specify output file path. NOT IMPLEMENTED YET",
+				Usage:   "Specify output file path. Example: ./output.gpr or C:/output.gpr. NOT IMPLEMENTED YET",
 			},
 			&cli.IntFlag{
 				Name:    "interval",
@@ -47,8 +46,37 @@ func Init() {
 			},
 			&cli.BoolFlag{
 				Name:  "nogui",
-				Usage: "Disable GUI output (why you no like graph? ;-;)",
+				Usage: "Disable GUI output (why you no like graph? ;-;) NOT IMPLEMENTED YET",
 				Value: false,
+			},
+		},
+		Commands: []*cli.Command{
+			{
+				Name:  "replay",
+				Usage: "Load a previously saved ping session to inspect",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:    "input",
+						Aliases: []string{"i"},
+						Usage:   "Path to the saved ping session file",
+					},
+				},
+			},
+			{
+				Name:  "convert",
+				Usage: "Convert a previously saved ping session to CSV or JSON",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:    "input",
+						Aliases: []string{"i"},
+						Usage:   "Path to the saved ping session file",
+					},
+					&cli.StringFlag{
+						Name:    "output",
+						Aliases: []string{"o"},
+						Usage:   "Specify output file path. Example: ./output.gpr or C:/output.gpr. NOT IMPLEMENTED YET",
+					},
+				},
 			},
 		},
 		Action: func(ctx context.Context, com *cli.Command) error {
@@ -58,10 +86,11 @@ func Init() {
 				return nil
 			}
 			pingConfig := &PingConfig{
-				Hosts:    com.StringSlice("host"),
-				Interval: int(com.Int("interval")),
-				Count:    int(com.Int("count")),
-				NoGUI:    com.Bool("nogui"),
+				Hosts:          com.StringSlice("host"),
+				Interval:       int(com.Int("interval")),
+				Count:          int(com.Int("count")),
+				OutputFilePath: com.String("output"),
+				NoGUI:          com.Bool("nogui"),
 			}
 			Ping(pingConfig)
 
@@ -76,19 +105,16 @@ func Init() {
 }
 
 type PingConfig struct {
-	Hosts    []string
-	Interval int
-	Count    int
-	NoGUI    bool
+	Hosts          []string
+	Interval       int
+	Count          int
+	OutputFilePath string
+	NoGUI          bool
 }
 
 func Ping(config *PingConfig) {
 	chart := gui.InitChart(80, 24) // width, height
-
-	// TODO: stuff that will be cmd inputable
 	pingDstList := []data.ColorHost{}
-	// count := 4
-	// interval := 1000 // in milliseconds
 
 	//TODO: Make this only run if we are doing gui shizzles
 	for i, host := range config.Hosts {
@@ -141,17 +167,18 @@ func Ping(config *PingConfig) {
 	}
 
 	// Listen for Ctrl-C.
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	go func() {
-		for _ = range c {
-			fmt.Println("Received interrupt signal. Shutting down...")
-			for _, p := range pingerList {
-				p.Stop()
-			}
-			os.Exit(0)
-		}
-	}()
+	// Don't think we need this anymore
+	//c := make(chan os.Signal, 1)
+	//signal.Notify(c, os.Interrupt)
+	//go func() {
+	//	for _ = range c {
+	//		fmt.Println("Received interrupt signal. Shutting down...")
+	//		for _, p := range pingerList {
+	//			p.Stop()
+	//		}
+	//		os.Exit(0)
+	//	}
+	//}()
 
 	// Pool up the pingers and wait for them to finish
 	pingPool := pond.NewPool(len(pingerList))

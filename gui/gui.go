@@ -49,6 +49,9 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		// TODO: implement window resizing logic here
+		println(msg.Width)
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
