@@ -201,6 +201,7 @@ func Ping(config *PingConfig) {
 		PingerList:  pingerList,
 		HostList:    pingDstList,
 		HighestPing: 0.0,
+		DebugText:   "",
 	}
 
 	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {

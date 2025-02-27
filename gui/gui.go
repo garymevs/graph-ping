@@ -19,6 +19,7 @@ type Model struct {
 	PingerList  []*probing.Pinger
 	HostList    []data.ColorHost
 	HighestPing float64
+	DebugText   string
 }
 
 func InitChart(width int, height int) tslc.Model {
@@ -29,8 +30,9 @@ func InitChart(width int, height int) tslc.Model {
 	}
 
 	chart.XLabelFormatter = tslc.HourTimeLabelFormatter()
-	chart.AutoMaxY = true
-	chart.SetViewYRange(0, 0.05)
+	chart.UpdateHandler = tslc.HourNoZoomUpdateHandler(1)
+	//chart.AutoMaxY = true
+	//chart.SetViewYRange(0, 0.05)
 
 	return chart
 }
@@ -42,6 +44,7 @@ func waitForPing(packetChan chan *data.DataSetPacket) tea.Cmd {
 }
 
 func (m Model) Init() tea.Cmd {
+	m.Chart.DrawXYAxisAndLabel()
 	return tea.Batch(
 		waitForPing(m.PacketChan),
 	)
@@ -50,10 +53,25 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		// TODO: implement window resizing logic here
-		println(msg.Width)
+		// Really hacky chart scaling
+		newWidth := int(float64(msg.Width) * 0.99)
+		newHeight := int(float64(msg.Height) * 0.9)
+		if msg.Width <= 100 {
+			newWidth = int(float64(msg.Width)*0.99) - 1
+		}
+		if msg.Height <= 20 {
+			newHeight = int(float64(msg.Height)*0.9) - 1
+		}
+		if msg.Height <= 10 {
+			newHeight = int(float64(msg.Height)*0.9) - 2
+		}
+		m.Chart.Resize(newWidth, newHeight)
 	case tea.KeyMsg:
 		switch msg.String() {
+		case "up", "down", "left", "right", "pgup", "pgdown":
+			m.DebugText = "Key pressed: " + msg.String()
+			m.Chart, _ = m.Chart.Update(msg)
+			m.Chart.DrawBrailleAll()
 		case "q", "ctrl+c":
 			// Kill the pingers when we close the gui
 			for _, pinger := range m.PingerList {
@@ -61,6 +79,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		}
+	case tea.MouseMsg:
+		m.Chart, _ = m.Chart.Update(msg)
+		m.Chart.DrawBrailleAll()
 	case *data.DataSetPacket:
 		// TODO: Change this to pushing data sets
 		m.Chart.PushDataSet(msg.DataSetName, tslc.TimePoint{Time: msg.Timestamp, Value: msg.Packet.Rtt.Seconds()})
@@ -68,7 +89,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.HighestPing = msg.Packet.Rtt.Seconds()
 			m.Chart.SetViewYRange(0, m.HighestPing*2)
 		}
-		m.Chart, _ = m.Chart.Update(msg)
+		//m.Chart, _ = m.Chart.Update(msg)
 		m.Chart.DrawBrailleAll()
 		return m, waitForPing(m.PacketChan)
 	}
@@ -78,12 +99,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	// call bubblezone Manager.Scan() at root model
 	// Not sure this is the correct use of scan here but we'll see
-	s := m.ZoneManager.Scan(
+	s :=
 		lipgloss.NewStyle().
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderForeground(lipgloss.Color("63")). // purple
-			Render(m.Chart.View()),
-	)
+			Render(m.Chart.View())
+
 	s += "\n"
 	for _, host := range m.HostList {
 		s += lipgloss.NewStyle().
@@ -91,5 +112,7 @@ func (m Model) View() string {
 			Render(host.Host)
 		s += "    "
 	}
-	return s
+	s += m.DebugText
+	return m.ZoneManager.Scan(s)
+	//return s
 }
