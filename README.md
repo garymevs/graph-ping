@@ -7,6 +7,7 @@ Currently only tested on Windows.
 ### TODO:
 - [ ] Fix TUI zoom/scroll control
 - [ ] CSV graph replay
+- [ ] Proper handling of unreachable hosts (as it stands nothing is logged)
 
 
 ### --help
