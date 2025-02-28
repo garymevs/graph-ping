@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"graph-ping/data"
-	"graph-ping/gui"
+	"graph-ping/output"
+	gui "graph-ping/tui"
 	"os"
 	"time"
 
@@ -20,8 +22,8 @@ import (
 func Init() {
 	cmd := &cli.Command{
 		Name:        "graph-ping",
-		Usage:       "Graph ping results in a GUI",
-		Description: "graph-ping is a tool that pings multiple hosts and displays the results in a graphical interface. It uses the Prometheus community's pro-bing library to perform the pinging and the Charmbracelet's bubbletea library to create the GUI.",
+		Usage:       "multi-ping TUI and logging solution",
+		Description: "graph-ping is a tool that can ping multiple hosts, display the results in a TUI and log to a CSV",
 		Flags: []cli.Flag{
 			&cli.StringSliceFlag{
 				Name:  "host",
@@ -30,7 +32,7 @@ func Init() {
 			&cli.StringFlag{
 				Name:    "output",
 				Aliases: []string{"o"},
-				Usage:   "Specify output file path. Example: ./output.gpr or C:/output.gpr. NOT IMPLEMENTED YET",
+				Usage:   "Specify output file path. Example: ./output.csv or C:/output.csv",
 			},
 			&cli.IntFlag{
 				Name:    "interval",
@@ -44,41 +46,25 @@ func Init() {
 				Usage:   "Set the number of pings to send. 0: infinite",
 				Value:   0,
 			},
-			&cli.BoolFlag{
-				Name:  "nogui",
-				Usage: "Disable GUI output (why you no like graph? ;-;) NOT IMPLEMENTED YET",
-				Value: false,
-			},
+			//&cli.BoolFlag{
+			//Name:  "nogui",
+			//Usage: "Disable TUI output (why you no like graph? ;-;) NOT IMPLEMENTED YET",
+			//Value: false,
+			//},
 		},
-		Commands: []*cli.Command{
-			{
-				Name:  "replay",
-				Usage: "Load a previously saved ping session to inspect",
-				Flags: []cli.Flag{
-					&cli.StringFlag{
-						Name:    "input",
-						Aliases: []string{"i"},
-						Usage:   "Path to the saved ping session file",
-					},
-				},
-			},
-			{
-				Name:  "convert",
-				Usage: "Convert a previously saved ping session to CSV or JSON",
-				Flags: []cli.Flag{
-					&cli.StringFlag{
-						Name:    "input",
-						Aliases: []string{"i"},
-						Usage:   "Path to the saved ping session file",
-					},
-					&cli.StringFlag{
-						Name:    "output",
-						Aliases: []string{"o"},
-						Usage:   "Specify output file path. Example: ./output.gpr or C:/output.gpr. NOT IMPLEMENTED YET",
-					},
-				},
-			},
-		},
+		//Commands: []*cli.Command{
+		//	{
+		//		Name:  "replay",
+		//		Usage: "Load a previously saved ping session to inspect",
+		//		Flags: []cli.Flag{
+		//			&cli.StringFlag{
+		//				Name:    "input",
+		//				Aliases: []string{"i"},
+		//				Usage:   "Path to the saved ping session file",
+		//			},
+		//		},
+		//	},
+		//},
 		Action: func(ctx context.Context, com *cli.Command) error {
 			if len(com.StringSlice("host")) == 0 {
 				cli.ShowAppHelp(com)
@@ -90,16 +76,15 @@ func Init() {
 				Interval:       int(com.Int("interval")),
 				Count:          int(com.Int("count")),
 				OutputFilePath: com.String("output"),
-				NoGUI:          com.Bool("nogui"),
+				//NoGUI:          com.Bool("nogui"),
 			}
-			Ping(pingConfig)
-
-			return nil
+			return Ping(pingConfig)
 		},
 	}
 
 	if err := cmd.Run(context.Background(), os.Args); err != nil {
-		panic(err)
+		// Program should have stopped by this point so just tell the user what went wrong
+		println(err.Error())
 	}
 
 }
@@ -112,11 +97,12 @@ type PingConfig struct {
 	NoGUI          bool
 }
 
-func Ping(config *PingConfig) {
+func Ping(config *PingConfig) error {
+	// Initial height doesn't really matter since tea is auto-resizing anyway
 	chart := gui.InitChart(80, 24) // width, height
 	pingDstList := []data.ColorHost{}
 
-	//TODO: Make this only run if we are doing gui shizzles
+	//TODO: Make this only run if we are doing tui shizzles
 	for i, host := range config.Hosts {
 		style := lipgloss.NewStyle().
 			Foreground(lipgloss.Color(fmt.Sprintf("%d", i+1)))
@@ -130,6 +116,21 @@ func Ping(config *PingConfig) {
 	// Set up packet channel to receive pings for processing
 	// o.o packet-chan
 	packetChan := make(chan *data.DataSetPacket)
+	// Send data to be written to the output file
+	outputFileChan := make(chan *data.DataSetPacket)
+
+	// Existing file check
+	if _, err := os.Stat(config.OutputFilePath); err == nil {
+		return errors.New("output file already exists")
+	}
+
+	if config.OutputFilePath != "" {
+		err := output.Init(config.OutputFilePath, outputFileChan)
+		if err != nil {
+			// TODO: This can probably be handled betterer but this works for now
+			return errors.New("failed to initialize output file writer")
+		}
+	}
 
 	// Set up all the pingers
 	pingerList := []*probing.Pinger{}
@@ -137,16 +138,27 @@ func Ping(config *PingConfig) {
 		pinger, err := probing.NewPinger(host.Host)
 		if err != nil {
 			// If we can't set up one of the pingers then we should just give up
-			panic(err)
+			return err
 		}
 		pinger.SetPrivileged(true)
 		pinger.Count = config.Count
 		pinger.Interval = time.Duration(config.Interval) * time.Millisecond
 
 		pinger.OnRecv = func(pkt *probing.Packet) {
-			//fmt.Printf("%s: %d bytes from %s: icmp_seq=%d time=%v\n",
-			//	host, pkt.Nbytes, pkt.IPAddr, pkt.Seq, pkt.Rtt)
-			packetChan <- &data.DataSetPacket{DataSetName: host.Host, Timestamp: time.Now(), Packet: pkt}
+			dataSetPacket := &data.DataSetPacket{
+				Timestamp: time.Now(),
+				Addr:      host.Host,
+				Rtt:       pkt.Rtt,
+				IPAddr:    pkt.IPAddr,
+				Nbytes:    pkt.Nbytes,
+				Seq:       pkt.Seq,
+				TTL:       pkt.TTL,
+				ID:        pkt.ID,
+			}
+			packetChan <- dataSetPacket
+			if config.OutputFilePath != "" {
+				outputFileChan <- dataSetPacket
+			}
 		}
 
 		pinger.OnDuplicateRecv = func(pkt *probing.Packet) {
@@ -166,20 +178,6 @@ func Ping(config *PingConfig) {
 		pingerList = append(pingerList, pinger)
 	}
 
-	// Listen for Ctrl-C.
-	// Don't think we need this anymore
-	//c := make(chan os.Signal, 1)
-	//signal.Notify(c, os.Interrupt)
-	//go func() {
-	//	for _ = range c {
-	//		fmt.Println("Received interrupt signal. Shutting down...")
-	//		for _, p := range pingerList {
-	//			p.Stop()
-	//		}
-	//		os.Exit(0)
-	//	}
-	//}()
-
 	// Pool up the pingers and wait for them to finish
 	pingPool := pond.NewPool(len(pingerList))
 	for _, pinger := range pingerList {
@@ -188,6 +186,7 @@ func Ping(config *PingConfig) {
 		})
 	}
 
+	// TODO: this doesn't seem to work
 	// mouse support is enabled with BubbleZone
 	zoneManager := zone.New()
 	chart.SetZoneManager(zoneManager)
@@ -204,12 +203,19 @@ func Ping(config *PingConfig) {
 		DebugText:   "",
 	}
 
+	// Seems to block until tea.Quit is fired
 	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
-		fmt.Println("Error running program:", err)
-		os.Exit(1)
+		return err
 	}
 
-	// Wait for all the pingers to finish
-	// Never actually hit if the GUI is doing its thing
-	pingPool.StopAndWait()
+	// Kill the pingers when we close the gui
+	for _, pinger := range m.PingerList {
+		pinger.Stop()
+	}
+
+	// Close channels
+	close(packetChan)
+	close(outputFileChan)
+
+	return nil
 }

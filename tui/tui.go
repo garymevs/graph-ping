@@ -69,24 +69,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "down", "left", "right", "pgup", "pgdown":
-			m.DebugText = "Key pressed: " + msg.String()
+			//m.DebugText = "Key pressed: " + msg.String()
 			m.Chart, _ = m.Chart.Update(msg)
 			m.Chart.DrawBrailleAll()
 		case "q", "ctrl+c":
-			// Kill the pingers when we close the gui
-			for _, pinger := range m.PingerList {
-				pinger.Stop()
-			}
 			return m, tea.Quit
 		}
 	case tea.MouseMsg:
 		m.Chart, _ = m.Chart.Update(msg)
 		m.Chart.DrawBrailleAll()
 	case *data.DataSetPacket:
-		// TODO: Change this to pushing data sets
-		m.Chart.PushDataSet(msg.DataSetName, tslc.TimePoint{Time: msg.Timestamp, Value: msg.Packet.Rtt.Seconds()})
-		if msg.Packet.Rtt.Seconds() > m.HighestPing {
-			m.HighestPing = msg.Packet.Rtt.Seconds()
+		m.Chart.PushDataSet(msg.Addr, tslc.TimePoint{Time: msg.Timestamp, Value: msg.Rtt.Seconds()})
+		if msg.Rtt.Seconds() > m.HighestPing {
+			m.HighestPing = msg.Rtt.Seconds()
 			m.Chart.SetViewYRange(0, m.HighestPing*2)
 		}
 		//m.Chart, _ = m.Chart.Update(msg)
@@ -106,6 +101,7 @@ func (m Model) View() string {
 			Render(m.Chart.View())
 
 	s += "\n"
+	s += "Exit: q/ctrl+c    "
 	for _, host := range m.HostList {
 		s += lipgloss.NewStyle().
 			Foreground(lipgloss.Color(host.Color)).
