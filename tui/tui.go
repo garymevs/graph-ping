@@ -1,4 +1,4 @@
-package gui
+package tui
 
 import (
 	"fmt"
@@ -22,9 +22,13 @@ type Model struct {
 	DebugText   string
 }
 
-func InitChart(width int, height int) tslc.Model {
+func StartTUI(
+	packetChan chan *data.DataSetPacket,
+	pingerList []*probing.Pinger,
+	hostList []string,
+) error {
 	// TODO: Fix scrolling / key control for viewing
-	chart := tslc.New(width, height)
+	chart := tslc.New(80, 24)
 	chart.YLabelFormatter = func(i int, y float64) string {
 		return fmt.Sprintf("%.3f", y)
 	}
@@ -34,7 +38,46 @@ func InitChart(width int, height int) tslc.Model {
 	//chart.AutoMaxY = true
 	//chart.SetViewYRange(0, 0.05)
 
-	return chart
+	pingDstList := []data.ColorHost{}
+	for i, host := range hostList {
+		style := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(fmt.Sprintf("%d", i+1)))
+		chart.SetDataSetStyle(host, style)
+		pingDstList = append(pingDstList,
+			data.ColorHost{
+				Color: fmt.Sprintf("%d", i+1),
+				Host:  host,
+			})
+	}
+
+	// TODO: this doesn't seem to work
+	// mouse support is enabled with BubbleZone
+	zoneManager := zone.New()
+	chart.SetZoneManager(zoneManager)
+	chart.Focus() // set focus to process keyboard and mouse messages
+
+	// start new Bubble Tea program with mouse support enabled
+	m := Model{
+		Chart:       chart,
+		ZoneManager: zoneManager,
+		PacketChan:  packetChan,
+		PingerList:  pingerList,
+		HostList:    pingDstList,
+		HighestPing: 0.0,
+		DebugText:   "",
+	}
+
+	// Seems to block until tea.Quit is fired
+	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
+		return err
+	}
+
+	// Kill the pingers when we close the gui
+	for _, pinger := range m.PingerList {
+		pinger.Stop()
+	}
+
+	return nil
 }
 
 func waitForPing(packetChan chan *data.DataSetPacket) tea.Cmd {
@@ -92,8 +135,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	// call bubblezone Manager.Scan() at root model
-	// Not sure this is the correct use of scan here but we'll see
 	s :=
 		lipgloss.NewStyle().
 			BorderStyle(lipgloss.NormalBorder()).

@@ -6,17 +6,13 @@ import (
 	"fmt"
 	"graph-ping/data"
 	"graph-ping/output"
-	gui "graph-ping/tui"
+	"graph-ping/tui"
 	"os"
 	"time"
 
 	"github.com/alitto/pond/v2"
 	probing "github.com/prometheus-community/pro-bing"
 	"github.com/urfave/cli/v3"
-
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	zone "github.com/lrstanley/bubblezone"
 )
 
 func Init() {
@@ -46,11 +42,11 @@ func Init() {
 				Usage:   "Set the number of pings to send. 0: infinite",
 				Value:   0,
 			},
-			//&cli.BoolFlag{
-			//Name:  "nogui",
-			//Usage: "Disable TUI output (why you no like graph? ;-;) NOT IMPLEMENTED YET",
-			//Value: false,
-			//},
+			&cli.BoolFlag{
+				Name:  "nogui",
+				Usage: "Disable TUI output (why you no like graph? ;-;)",
+				Value: false,
+			},
 		},
 		//Commands: []*cli.Command{
 		//	{
@@ -76,7 +72,7 @@ func Init() {
 				Interval:       int(com.Int("interval")),
 				Count:          int(com.Int("count")),
 				OutputFilePath: com.String("output"),
-				//NoGUI:          com.Bool("nogui"),
+				NoGUI:          com.Bool("nogui"),
 			}
 			return Ping(pingConfig)
 		},
@@ -98,21 +94,6 @@ type PingConfig struct {
 }
 
 func Ping(config *PingConfig) error {
-	// Initial height doesn't really matter since tea is auto-resizing anyway
-	chart := gui.InitChart(80, 24) // width, height
-	pingDstList := []data.ColorHost{}
-
-	//TODO: Make this only run if we are doing tui shizzles
-	for i, host := range config.Hosts {
-		style := lipgloss.NewStyle().
-			Foreground(lipgloss.Color(fmt.Sprintf("%d", i+1)))
-		chart.SetDataSetStyle(host, style)
-		pingDstList = append(pingDstList, data.ColorHost{
-			Host:  host,
-			Color: fmt.Sprintf("%d", i+1),
-		})
-	}
-
 	// Set up packet channel to receive pings for processing
 	// o.o packet-chan
 	packetChan := make(chan *data.DataSetPacket)
@@ -124,6 +105,7 @@ func Ping(config *PingConfig) error {
 		return errors.New("output file already exists")
 	}
 
+	// Output file writer setup
 	if config.OutputFilePath != "" {
 		err := output.Init(config.OutputFilePath, outputFileChan)
 		if err != nil {
@@ -132,22 +114,32 @@ func Ping(config *PingConfig) error {
 		}
 	}
 
-	// Set up all the pingers
+	// Set up the pingers
 	pingerList := []*probing.Pinger{}
-	for _, host := range pingDstList {
-		pinger, err := probing.NewPinger(host.Host)
+	for _, host := range config.Hosts {
+		pinger, err := probing.NewPinger(host)
 		if err != nil {
 			// If we can't set up one of the pingers then we should just give up
 			return err
 		}
+		// Needed for Windows (not sure on other platforms)
 		pinger.SetPrivileged(true)
+		pinger.RecordRtts = false
+		pinger.RecordTTLs = false
 		pinger.Count = config.Count
 		pinger.Interval = time.Duration(config.Interval) * time.Millisecond
+		//pinger.Timeout = time.Second
+
+		pinger.OnSend = func(pkt *probing.Packet) {
+			if config.NoGUI {
+				fmt.Printf("%s: sending packet icmp_seq=%d to %s\n", host, pkt.Seq, pkt.IPAddr)
+			}
+		}
 
 		pinger.OnRecv = func(pkt *probing.Packet) {
 			dataSetPacket := &data.DataSetPacket{
 				Timestamp: time.Now(),
-				Addr:      host.Host,
+				Addr:      host,
 				Rtt:       pkt.Rtt,
 				IPAddr:    pkt.IPAddr,
 				Nbytes:    pkt.Nbytes,
@@ -155,9 +147,31 @@ func Ping(config *PingConfig) error {
 				TTL:       pkt.TTL,
 				ID:        pkt.ID,
 			}
-			packetChan <- dataSetPacket
+			if config.NoGUI {
+				fmt.Printf("%s: %d bytes from %s: icmp_seq=%d time=%v\n",
+					host,
+					pkt.Nbytes,
+					pkt.IPAddr,
+					pkt.Seq,
+					pkt.Rtt,
+				)
+			} else {
+				packetChan <- dataSetPacket
+			}
 			if config.OutputFilePath != "" {
 				outputFileChan <- dataSetPacket
+			}
+		}
+
+		pinger.OnRecvError = func(err error) {
+			if config.NoGUI {
+				//fmt.Printf("Error receiving packet: %v\n", err)
+			}
+		}
+
+		pinger.OnSendError = func(pkt *probing.Packet, err error) {
+			if config.NoGUI {
+				//fmt.Printf("Error sending packet: %s, %v\n", pkt.Addr, err)
 			}
 		}
 
@@ -167,15 +181,21 @@ func Ping(config *PingConfig) error {
 		}
 
 		pinger.OnFinish = func(stats *probing.Statistics) {
-			// Don't do anything here. We really don't care
-			//fmt.Printf("\n--- %s: %s ping statistics ---\n", host, stats.Addr)
-			//fmt.Printf("%d packets transmitted, %d packets received, %v%% packet loss\n",
-			//	stats.PacketsSent, stats.PacketsRecv, stats.PacketLoss)
-			//fmt.Printf("round-trip min/avg/max/stddev = %v/%v/%v/%v\n",
-			//	stats.MinRtt, stats.AvgRtt, stats.MaxRtt, stats.StdDevRtt)
+			// If nogui is enabled then print this
+			if config.NoGUI {
+				fmt.Printf("\n--- %s: %s ping statistics ---\n", host, stats.Addr)
+				fmt.Printf("%d packets transmitted, %d packets received, %v%% packet loss\n",
+					stats.PacketsSent, stats.PacketsRecv, stats.PacketLoss)
+				fmt.Printf("round-trip min/avg/max/stddev = %v/%v/%v/%v\n",
+					stats.MinRtt, stats.AvgRtt, stats.MaxRtt, stats.StdDevRtt)
+			}
 		}
 
 		pingerList = append(pingerList, pinger)
+	}
+
+	if config.NoGUI {
+		fmt.Printf("Starting %d pingers", len(pingerList))
 	}
 
 	// Pool up the pingers and wait for them to finish
@@ -186,31 +206,16 @@ func Ping(config *PingConfig) error {
 		})
 	}
 
-	// TODO: this doesn't seem to work
-	// mouse support is enabled with BubbleZone
-	zoneManager := zone.New()
-	chart.SetZoneManager(zoneManager)
-	chart.Focus() // set focus to process keyboard and mouse messages
-
-	// start new Bubble Tea program with mouse support enabled
-	m := gui.Model{
-		Chart:       chart,
-		ZoneManager: zoneManager,
-		PacketChan:  packetChan,
-		PingerList:  pingerList,
-		HostList:    pingDstList,
-		HighestPing: 0.0,
-		DebugText:   "",
-	}
-
-	// Seems to block until tea.Quit is fired
-	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
-		return err
-	}
-
-	// Kill the pingers when we close the gui
-	for _, pinger := range m.PingerList {
-		pinger.Stop()
+	// TUI enabled
+	if !config.NoGUI {
+		err := tui.StartTUI(packetChan, pingerList, config.Hosts)
+		if err != nil {
+			return err
+		}
+	} else {
+		// TUI disabled, just run the pingers and print results to stdout
+		// Wait for the pool to finish
+		pingPool.StopAndWait()
 	}
 
 	// Close channels
