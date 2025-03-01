@@ -13,7 +13,7 @@ func Init(fileOutputPath string, outputFileChan chan *data.DataSetPacket) error 
 			return err
 		}
 
-		outputFile.WriteString("Timestamp,Addr,Rtt,IPAddr,Nbytes,Seq,TTL,ID\n")
+		outputFile.WriteString(data.CSVHeader)
 
 		// Start the loop writing to the output file
 		go func() {
