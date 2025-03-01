@@ -7,7 +7,7 @@ Currently only tested on Windows.
 ### TODO:
 - [ ] Fix TUI zoom/scroll control
 - [ ] CSV graph replay
-- [ ] Proper handling of unreachable hosts (as it stands nothing is logged)
+- [ ] Proper handling of unreachable hosts (timeouts are being handled but unreachable hosts are not being removed from the list)
 
 
 ### --help
@@ -25,7 +25,9 @@ GLOBAL OPTIONS:
    --host value [ --host value ]  Provide hosts to ping. Example: graph-ping --host google.com --host 192.168.1.1
    --output value, -o value       Specify output file path. Example: ./output.csv or C:/output.csv
    --interval value, -i value     Set the interval between pings in milliseconds (default: 1000)
+   --timeout value, -t value      Set the timeout for each ping in milliseconds (must be less than interval) (default: 999)
    --count value, -c value        Set the number of pings to send. 0: infinite (default: 0)
+   --nogui                        Disable TUI output (why you no like graph? ;-;) (default: false)
    --help, -h                     show help
 ```
 
